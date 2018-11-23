@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creates the AMI Factory State Machine
+Resources:
+  StateMachine:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      StateMachineName: "AMIFactoryStateMachine"
+      RoleArn: !ImportValue AMIFactoryStateMachineExecutionRoleArn
+      DefinitionString:
+        !Sub
+          - |-
+            {
+              "Comment": "AMI Factory Automation Workflow",
+              "Version": "1.0",
+              "StartAt": "UpdateAWSImageParameters",
+              "States": {
+                "UpdateAWSImageParameters": {
+                  "Type": "Task",
+                  "Resource": "${AMIFactoryUpdateAWSImageParametersLambdaArn}",
+                  "Next": "RunAutomation"
+                },
+                "RunAutomation": {
+                  "Type": "Task",
+                  "Resource": "${AMIFactoryRunEC2AutomationLambdaArn}",
+                  "Next": "WaitToPoll"
+                },
+                "WaitToPoll": {
+                  "Type": "Wait",
+                  "Seconds": 300,
+                  "Next": "GetAutomationStatus"
+                },    
+                "GetAutomationStatus": {
+                  "Type": "Task",
+                  "Resource": "${AMIFactoryGetAutomationStatusLambdaArn}",
+                  "Next": "EvaluateAutomationStatus"
+                },
+                "EvaluateAutomationStatus": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.AutomationExecutionStatus",
+                      "StringEquals": "FAILED",
+                      "Next": "PublishFailure"
+                    },
+                    {
+                      "Variable": "$.AutomationExecutionStatus",
+                      "StringEquals": "SUCCESS",
+                      "Next": "SaveImageId"
+                    }
+                  ],
+                  "Default": "WaitToPoll"
+                },
+                "PublishFailure": {
+                  "Type": "Task",
+                  "Resource": "${PublishAmiUpdateNotificationLambdaArn}",
+                  "Next": "FailWorkflow"
+                },
+                "FailWorkflow": {
+                  "Type": "Fail",
+                  "Cause": "AWS Batch Job Failed",
+                  "Error": "EC2 Automation returned FAILED"
+                },
+                "SaveImageId": {
+                  "Type": "Task",
+                  "Resource": "${SaveImageIdLambdaArn}",
+                  "Next": "PublishUpdate"
+                },
+                "PublishUpdate": {
+                  "Type": "Task",
+                  "Resource": "${PublishAmiUpdateNotificationLambdaArn}",
+                  "Next": "CreateChildImages"
+                },
+                "CreateChildImages": {
+                  "Type": "Task",
+                  "Resource": "${RunNextWorkflowIterationLambdaArn}",
+                  "Next": "EndAutomationWorkflow"
+                },
+                "EndAutomationWorkflow": {
+                  "Type": "Pass",
+                  "Result": "All Done!",
+                  "End": true
+                }
+              }
+            }
+          - AMIFactoryRunEC2AutomationLambdaArn: !ImportValue AMIFactoryRunEC2AutomationLambdaArn
+            AMIFactoryGetAutomationStatusLambdaArn: !ImportValue AMIFactoryGetAutomationStatusLambdaArn
+            AMIFactoryUpdateAWSImageParametersLambdaArn: !ImportValue AMIFactoryUpdateAWSImageParametersLambdaArn
+            SaveImageIdLambdaArn: !ImportValue SaveImageIdLambdaArn
+            PublishAmiUpdateNotificationLambdaArn: !ImportValue PublishAmiUpdateNotificationLambdaArn
+            RunNextWorkflowIterationLambdaArn: !ImportValue RunNextWorkflowIterationLambdaArn
+Outputs:
+  StateMachineArn:
+    Description: Arn of the AMI Factory StateMachine
+    Value: !Ref StateMachine
+    Export:
+      Name: AMIFactoryStateMachineArn
