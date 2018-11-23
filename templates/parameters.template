@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creates the SSM parameters used for data-driven configuration within the AMI Factory
+Parameters:
+  BakingEnvironment:
+    Type: String
+    Description: The environment that is hosting this version of the AMI Factory
+  BakingSubnetId:
+    Type: String
+    Description: AMI creation and validation instances will be launched in this subnet
+  InstanceKeyPair:
+    Type: String
+    Description: The Key Pair used to configure instances during baking and validation
+Resources:
+  AMIFactoryBakingEnvironment:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The environment that is hosting this version of the AMI Factory
+      Name: '/amifactory/baking-environment'
+      Type: String
+      Value: !Ref BakingEnvironment
+  AMIFactoryInstanceKeyPair:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The Key Pair used to configure instances during baking and validation
+      Name: '/amifactory/instance-key-pair'
+      Type: String
+      Value: !Ref InstanceKeyPair
+  AMIFactoryBakingSubnet:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: AMI creation and validation instances will be launched in this subnet
+      Name: '/amifactory/baking-subnet'
+      Type: String
+      Value: !Ref BakingSubnetId
+  AMIFactory2012r2Workflow:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The workflow steps for WindowsServer 2012r2.
+      Name: '/amifactory/2012r2/workflow'
+      Type: String
+      Value: '{"Foundation":{"Automation":["WebServer"]},"WebServer":{"Automation":[]}}'
+  AMIFactory2016Workflow:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The workflow steps for WindowsServer 2016.
+      Name: '/amifactory/2016/workflow'
+      Type: String
+      Value: '{"Foundation":{"Automation":["WebServer"]},"WebServer":{"Automation":[]}}'
+  AMIFactory2012r2AWSCurrentAMI:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The current AWS-supplied AMI for windows 2012r2.
+      Name: '/amifactory/2012r2/aws/current-ami'
+      Type: String
+      Value: 'WILL POPULATE ON THE NEXT FACTORY EXECUTION'
+  AMIFactory2016AWSCurrentAMI:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The current AWS-supplied AMI for windows 2016.
+      Name: '/amifactory/2016/aws/current-ami'
+      Type: String
+      Value: 'WILL POPULATE ON THE NEXT FACTORY EXECUTION'
+  AMIFactory2012r2FoundationCurrentAMI:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The current GS-baked Foundation AMI for windows 2012r2.
+      Name: '/amifactory/2012r2/foundation/current-ami'
+      Type: String
+      Value: 'WILL POPULATE ON THE NEXT FACTORY EXECUTION'
+  AMIFactoryFoundationCurrent2016AMI:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The current GS-baked Foundation AMI for windows 2016.
+      Name: '/amifactory/2016/foundation/current-ami'
+      Type: String
+      Value: 'WILL POPULATE ON THE NEXT FACTORY EXECUTION'
+  AMIFactory2012r2WebServerCurrentAMI:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The current GS-baked WebServer AMI for windows 2012r2.
+      Name: '/amifactory/2012r2/webserver/current-ami'
+      Type: String
+      Value: 'WILL POPULATE ON THE NEXT FACTORY EXECUTION'
+  AMIFactory2016WebServerCurrentAMI:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The current GS-baked WebServer AMI for windows 2016.
+      Name: '/amifactory/2016/webserver/current-ami'
+      Type: String
+      Value: 'WILL POPULATE ON THE NEXT FACTORY EXECUTION'
+  AMIFactory2012r2FoundationFeatureList:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The list of windows features to be installed on the Windows Server 2012 r2 foundation AMI.
+      Name: '/amifactory/2012r2/foundation/feature-list'
+      Type: String
+      Value: "'Telnet-Client','PowerShellRoot','PowerShell','PowerShell-V2','PowerShell-ISE'"
+  AMIFactory2016FoundationFeatureList:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The list of windows features to be installed on the Windows Server 2016 foundation AMI.
+      Name: '/amifactory/2016/foundation/feature-list'
+      Type: String
+      Value: "'Telnet-Client','PowerShellRoot','PowerShell','PowerShell-V2','PowerShell-ISE'"
+  AMIFactoryWindowsUpdatesCategories:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: List of Windows Update Categories e.g. - CriticalUpdates,SecurityUpdates,etc,....
+      Name: '/amifactory/windows-updates/categories'
+      Type: String
+      Value: 'CriticalUpdates,SecurityUpdates'
+  AMIFactoryWindowsUpdatesSeverityLevels:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: List of Windows Updates Severity Levels e.g. - Critical,Important,etc,...
+      Name: '/amifactory/windows-updates/severity-levels'
+      Type: String
+      Value: 'Critical,Important'
+  AMIFactory2012r2WebServerFeatureList:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The list of windows features to be installed on the Windows Server 2012 r2 foundation AMI.
+      Name: '/amifactory/2012r2/webserver/feature-list'
+      Type: String
+      Value: "'Web-Server','Web-WebServer','Web-Common-Http','Web-Default-Doc','Web-Http-Errors','Web-Static-Content','Web-Health','Web-Http-Logging','Web-Request-Monitor','Web-Performance','Web-Stat-Compression','Web-Security','Web-Filtering','Web-Basic-Auth','Web-Windows-Auth','Web-App-Dev','Web-Net-Ext','Web-Net-Ext45','Web-Asp-Net','Web-Asp-Net45','Web-ISAPI-Ext','Web-ISAPI-Filter','Web-Mgmt-Tools','Web-Mgmt-Console','NET-Framework-Core','NET-Framework-45-Core','NET-WCF-HTTP-Activation45'"
+  AMIFactory2016WebServerFeatureList:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Description: The list of windows features to be installed on the Windows Server 2016 r2 foundation AMI.
+      Name: '/amifactory/2016/webserver/feature-list'
+      Type: String
+      Value: "'Web-Server','Web-WebServer','Web-Common-Http','Web-Default-Doc','Web-Http-Errors','Web-Static-Content','Web-Health','Web-Http-Logging','Web-Request-Monitor','Web-Performance','Web-Stat-Compression','Web-Security','Web-Filtering','Web-Basic-Auth','Web-Windows-Auth','Web-App-Dev','Web-Net-Ext','Web-Net-Ext45','Web-Asp-Net','Web-Asp-Net45','Web-ISAPI-Ext','Web-ISAPI-Filter','Web-Mgmt-Tools','Web-Mgmt-Console','NET-Framework-Core','NET-Framework-45-Core','NET-WCF-HTTP-Activation45'"

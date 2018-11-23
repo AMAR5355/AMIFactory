@@ -1,0 +1,140 @@
+{
+    "schemaVersion": "0.3",
+    "description": "Creates a new Windows AMI from the specified source AMI. By default it will install chef and execute a runlist. It will then sysprep and create the new AMI. Supports Windows Server 2008 R2 and greater.",
+    "assumeRole": "{{ AutomationAssumeRole }}",
+    "parameters": {
+      "TargetAmiId": {
+        "type": "String",
+        "description": "(Required) The source Amazon Machine Image ID."
+      },
+      "WindowsFeaturesList": {
+        "type": "String",
+        "description": "(Required) The list of windows features to be installed."
+      },
+      "SubnetId":{
+         "type":"String",
+         "description":"(Required) The subnet that the created instance will be placed into."
+      },
+      "OSVersion": {
+        "type": "String",
+        "description": "The OS version be used to configure this image.",
+        "allowedValues" : ["WindowsServer2016", "WindowsServer2012r2", "WindowsServer2008r2"]
+      },
+      "IamInstanceProfileName": {
+        "type": "String",
+        "description": "(Required) The name of the role that enables Systems Manager to manage the instance."
+      },
+      "AutomationAssumeRole": {
+        "type": "String",
+        "description": "(Required) The ARN of the role that allows Automation to perform the actions on your behalf."
+      },
+      "InstanceType": {
+        "type": "String",
+        "description": "(Optional) Type of instance to launch as the workspace host. Instance types vary by region."
+      },
+      "GenerationEnvironment" : {
+        "type"          : "String",
+        "description"   : "The environment in which this AMI is being generated."
+      },
+      "InstanceKeyPairName": {
+        "type": "String",
+        "description": "(Optional) The key pair used for the instance."
+      }
+    },
+    "mainSteps": [
+      {
+        "name": "LaunchInstance",
+        "action": "aws:runInstances",
+        "timeoutSeconds": 1800,
+        "maxAttempts": 3,
+        "onFailure": "Abort",
+        "inputs": {
+          "ImageId": "{{ TargetAmiId }}",
+          "InstanceType": "{{ InstanceType }}",
+          "SubnetId":"{{ SubnetId }}",
+          "MinInstanceCount": 1,
+          "MaxInstanceCount": 1,
+          "IamInstanceProfileName": "{{ IamInstanceProfileName }}",
+          "KeyName": "{{ InstanceKeyPairName }}",
+          "TagSpecifications":[
+            {
+              "ResourceType":"instance",
+              "Tags":[
+                {
+                  "Key": "Name",
+                  "Value": "AMIFactory_ValidationInstance_{{OSVersion}}"
+                },
+                {
+                  "Key":"AutomationExecutionId",
+                  "Value":"{{automation:EXECUTION_ID}}"
+                },
+                {
+                  "Key":"Iteration",
+                  "Value":"WebServer Validation"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "ValidateWindowsFeatures",
+        "action": "aws:runCommand",
+        "maxAttempts": 1,
+        "onFailure": "Abort",
+        "timeoutSeconds": 600,
+        "inputs": {
+          "DocumentName":"AWS-RunPowerShellScript",
+          "InstanceIds":["{{LaunchInstance.InstanceIds}}"],
+          "Parameters": {
+            "commands": [
+                "$ErrorActionPreference = 'Stop'",
+                "$features = @({{WindowsFeaturesList}})",
+                "Foreach($feature in $features) {",
+                " if(!(Get-WindowsFeature -name $feature).Installed) {",
+                "   write-host \"Missing Feature: $feature\"",
+                "   exit 1",
+                " }",
+                "}"
+            ]
+          }
+        }
+      },
+      {
+        "name":"CreateAMITags",
+        "action":"aws:createTags",
+        "maxAttempts": 3,
+        "onFailure":"Continue",
+        "inputs":{
+          "ResourceType":"EC2",
+          "ResourceIds":[
+              "{{ TargetAmiId }}"
+          ],
+          "Tags":[
+            {
+              "Key": "ValidationStatus",
+              "Value": "Complete"
+            },
+            {
+              "Key": "ValidationEnvironment",
+              "Value": "{{GenerationEnvironment}}-{{global:ACCOUNT_ID}}"
+            },
+            {
+              "Key":"ValidationExecutionId",
+              "Value":"{{automation:EXECUTION_ID}}"
+            }
+          ]
+        }
+      },
+      {
+        "name":"TerminateInstance",
+        "action": "aws:changeInstanceState",
+        "maxAttempts": 3,
+        "onFailure": "Continue",
+        "inputs": {
+          "InstanceIds": ["{{ LaunchInstance.InstanceIds }}"],
+          "DesiredState": "terminated"
+        }
+      }
+    ]
+  }

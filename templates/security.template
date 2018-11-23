@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creates the IAM resources necessary to execute the AMI Factory
+Resources:
+  ManagedInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: AmiFactoryInstanceRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ssm.amazonaws.com
+                - ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM'
+      Path: /
+  ManagedInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ManagedInstanceRole
+      InstanceProfileName: AmiFactoryManagedInstanceProfile
+  AutomationServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: AmiFactoryAutomationRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ssm.amazonaws.com
+                - ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:AMIFactory*'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonSSMAutomationRole'
+      Path: /
+      RoleName: AmiFactoryAutomationServiceRole
+  LambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: AmiFactoryLambdaRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Path: /
+      Policies:
+        - PolicyName: AmiFactoryLambdaRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameter'
+                  - 'ssm:PutParameter'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'ssm:resourceTag/Application': amifactory                
+              - Effect: Allow
+                Action:
+                  - 'ssm:StartAutomationExecution'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/AMIFactory*'
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetAutomationExecution'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation-execution/*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:ModifyImageAttribute'
+                Resource: 'arn:aws:ec2:region::image/*'
+                Condition:
+                  StringEquals:
+                    'ec2:ResourceTag/ValidationStatus': Complete
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeImages'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'states:List*'
+                Resource: 
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*'
+              - Effect: Allow
+                Action:
+                  - 'states:StartExecution'
+                Resource: 
+                  - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:AMIFactory*'
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:AMIFactory-*'
+  PassRolePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: AmiFactoryPassRolePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'iam:PassRole'
+            Resource:
+              - !GetAtt 
+                - ManagedInstanceRole
+                - Arn
+              - !GetAtt 
+                - AutomationServiceRole
+                - Arn
+      Roles:
+        - AmiFactoryAutomationServiceRole
+        - AmiFactoryLambdaRole
+  StateMachineExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: AmiFactoryStateMachineRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:AMIFactory*'
+Outputs:
+  AutomationServiceRoleArn:
+    Description: Arn of the AmiFactoryAutomationServiceRole
+    Value: !GetAtt 
+      - AutomationServiceRole
+      - Arn
+    Export:
+      Name: AMIFactoryAutomationServiceRoleArn
+  LambdaRoleArn:
+    Description: Arn of the AmiFactoryLambdaRole
+    Value: !GetAtt 
+      - LambdaRole
+      - Arn
+    Export:
+      Name: AMIFactoryLambdaRoleArn
+  LambdaRoleName:
+    Description: Arn of the AmiFactoryLambdaRole
+    Value: !Ref LambdaRole
+    Export:
+      Name: AMIFactoryLambdaRoleName
+  StateMachineExecutionRole:
+    Description: Arn of the StateMachineExecutionRole
+    Value: !GetAtt 
+      - StateMachineExecutionRole
+      - Arn
+    Export:
+      Name: AMIFactoryStateMachineExecutionRoleArn

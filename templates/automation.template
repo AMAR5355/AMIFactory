@@ -1,0 +1,541 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creates the automation resources required by the AMI Factory StateMachine
+Resources:
+  AmiUpdateTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      DisplayName: AMIFactory-Update
+      TopicName : AMIFactory-Update
+  AmiFailureTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      DisplayName: AMIFactory-Failure
+      TopicName : AMIFactory-Failure
+  RunWindowsStepFunctionLambdaSubscription:
+    Type: 'AWS::SNS::Subscription'
+    Properties:
+      Endpoint: !GetAtt 
+        - RunWindowsStepFunctionLambda
+        - Arn
+      Protocol: lambda
+      TopicArn: !Sub 'arn:aws:sns:${AWS::Region}:801119661308:ec2-windows-ami-update'
+  RunWindowsStepFunctionLambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: sns.amazonaws.com
+      SourceArn: !Sub 'arn:aws:sns:${AWS::Region}:801119661308:ec2-windows-ami-update'
+      FunctionName: !GetAtt 
+        - RunWindowsStepFunctionLambda
+        - Arn
+  RunWindowsStepFunctionLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          const aws = require('aws-sdk');
+          const stepFunctions = new aws.StepFunctions({ region: process.env.AWS_REGION });
+          const ssm = new aws.SSM({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+            var supportedOS = ['2012r2', '2016'];
+            var osToBuild = [];
+
+            if(event.windowsOS) {                            
+              if(!supportedOS.includes(event.windowsOS.toLowerCase())) {
+                return callback('WindowsOS parameter "' + event.windowsOS + '" is invalid.  Valid values are: ' + supportedOS.join(', '));
+              }
+              
+              osToBuild = [event.windowsOS];
+            } else {
+              osToBuild = supportedOS;
+            }
+
+            stepFunctions.listStateMachines({}, function(err,data) {
+              if (err) {
+                console.log(err, err.stack);
+                return callback(err);
+              }
+
+              var stateMachineArn = '';
+              for(var i = 0; i < data.stateMachines.length; i++) {
+                if(data.stateMachines[i].name.indexOf('AMIFactoryStateMachine') > -1) {
+                  stateMachineArn = data.stateMachines[i].stateMachineArn;
+                  break;
+                }
+              }
+
+              if(stateMachineArn == '') {
+                return callback('No StateMachine found for AMI Factory', event);
+              }
+
+              var now = (new Date()).getTime();
+                            
+              for(var j = 0; j < osToBuild.length; j++) {
+                var windowsOS = osToBuild[j];
+                var sfParamsWin = {
+                  stateMachineArn: stateMachineArn,
+                  input: '{ "osType": "windows", "windowsOS": "' + windowsOS + '", "iteration": { "name": "Foundation", "sourceAMI": "aws" } }',
+                  name: 'AMIFactory_StepFunctions_Execution_Foundation_' + windowsOS + '_' + now
+                };
+
+                stepFunctions.startExecution(sfParamsWin, function(err, data) {
+                  if (err) {
+                    console.log(err, err.stack);
+                    return callback(err);
+                  }
+
+                  console.log(data);
+                });
+              }
+              
+              callback(null, event);
+            });
+          };
+      Description: Starts the AMI Factory Step Function Workflow for Windows Variant(s)
+      FunctionName: AMIFactory-RunWindowsStepFunctionWorkflow
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 30
+      Tags:
+        - Key: Name
+          Value: AMIFactory-RunWindowsStepFunctionLambda
+  UpdateAWSImageParametersLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          const aws = require('aws-sdk');
+          const ec2 = new aws.EC2({ region: process.env.AWS_REGION });
+          const ssm = new aws.SSM({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+            var osKeys = {
+              '2012r2': {
+                'key': 'Windows_Server-2012-R2_RTM-English-64Bit-Base',
+                'rootType': 'ebs',
+                'ownerAlias': 'amazon',
+                'ssmParamName' : '/amifactory/2012r2/aws/current-ami'
+              },
+              '2016': {
+                'key': 'Windows_Server-2016-English-Full-Base',
+                'rootType': 'ebs',
+                'ownerAlias': 'amazon',
+                'ssmParamName' : '/amifactory/2016/aws/current-ami'
+              }
+            };
+
+            var osToBuild = event.windowsOS;
+            var key = osKeys[osToBuild.toLowerCase()].key;
+            var rootType = osKeys[osToBuild.toLowerCase()].rootType;
+            var ownerAlias = osKeys[osToBuild.toLowerCase()].ownerAlias;
+            var paramToUpdate = osKeys[osToBuild.toLowerCase()].ssmParamName;
+
+            var params = {
+              Filters: [
+                {
+                  Name: 'name',
+                  Values: ['*' + key + '*'],
+                },
+                {
+                  Name: 'root-device-type',
+                  Values: [rootType],
+                },
+                {
+                  Name: 'owner-alias',
+                  Values: [ownerAlias],
+                },
+                {
+                  Name: 'is-public',
+                  Values: ['true'],
+                }
+              ]
+            };
+
+            // Get AMI IDs with the specified name pattern and owner
+            ec2.describeImages(params, function(err, data) {
+              if (err) {
+                console.log(err, err.stack);
+                return callback(err);
+              }
+
+              // Check if the image is a beta or RC image (the Lambda function won't return any of these images)
+              const isBeta = (imageName) => imageName.toLowerCase().includes('beta') || imageName.toLowerCase().includes('.rc');
+              const images = data.Images;
+              // Sort images by CreationDate in descending order
+              images.sort((x, y) => y.CreationDate.localeCompare(x.CreationDate));
+              
+              var latestImageId = '';
+              var len = images.length;
+              for (let i = 0; i < len; i++) {
+                if(!isBeta(images[i].Name)){
+                  latestImageId = images[i].ImageId;
+                  break;
+                }
+              }
+
+              var params = {
+                Name: paramToUpdate,
+                Type: 'String',
+                Value: latestImageId,
+                Overwrite: true
+              };
+
+              ssm.putParameter(params, function(err, data) {
+                if (err) {
+                  console.log(err, err.stack);
+                  return callback(err);
+                }
+                
+                callback(null, event);
+              });
+            });
+          };
+      Description: Starts the AMI Factory Step Function Workflow
+      FunctionName: AMIFactory-UpdateAWSImageParameters
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 30
+      Tags:
+        - Key: Name
+          Value: AMIFactory-UpdateAWSImageParameters
+  GetAutomationStatusLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          const aws = require('aws-sdk');
+          const ec2 = new aws.EC2({ region: process.env.AWS_REGION });
+          const ssm = new aws.SSM({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+            var params = {
+              AutomationExecutionId: event.AutomationExecutionId
+            };
+
+            ssm.getAutomationExecution(params, function(err, data) {
+              if (err) {
+                console.log(err, err.stack);
+                return callback(err);
+              }
+              
+              event.AutomationExecutionStatus = data.AutomationExecution.AutomationExecutionStatus.toUpperCase();
+              event.ImageId = data.AutomationExecution.Outputs['CreateImage.ImageId'][0];
+
+              callback(null, event);
+            });
+          }
+      Description: Examines the current AMI Factory SSM Automation.  Returns the AutomationExecutionStatus and, if complete, the outputed ImageId
+      FunctionName: AMIFactory-GetAutomationStatus
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 10
+      Tags:
+        - Key: Name
+          Value: AMIFactory-GetAutomationStatus
+  PublishAmiUpdateNotificationLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: !Sub |
+          const aws = require("aws-sdk");
+          const sns = new aws.SNS({ region: process.env.AWS_REGION });
+          const ec2 = new aws.EC2({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+            var amiId = event.ImageId;
+
+            var params = {
+              DryRun: false,
+              ImageIds: [amiId]
+            };
+
+            function publishNotification(status, ami) {
+              var osToBuild = event.linuxOS || event.windowsOS;
+              var eventData = {
+                AutomationExecutionStatus: event.AutomationExecutionStatus,
+                OS: osToBuild,
+                Iteration: event.iteration.name,
+                AmiName: ami.Name || '',
+                AmiRegion: '${AWS::Region}',
+                ImageId: amiId || '',
+                AmiOwnerId: ami.OwnerId || '',
+                AmiState: ami.State || '',
+                AmiDescription: ami.Description || '',
+                AmiTags: ami.Tags || []
+              };
+              var topicArn = status == 'SUCCESS' ? '${AmiUpdateTopic}' : '${AmiFailureTopic}';
+              var eventText = JSON.stringify(eventData);
+              var params = {
+                  Message: eventText, 
+                  Subject: "New AMI Just Created",
+                  TopicArn: topicArn
+              };
+
+              console.log("Publishing notification to Topic for AMI:" + eventData.ImageId + "(" + eventData.AmiName + ")");
+              sns.publish(params,function(err, data) {
+                if (err) {
+                  console.log(err, err.stack);
+                  return callback(err);
+                }
+
+                callback(null, event);
+              });
+            }
+
+            if(event.AutomationExecutionStatus == 'SUCCESS') {
+              ec2.describeImages(params, function(err, data) {
+                if (err) {
+                  console.log(err, err.stack);
+                  return callback(err);
+                }
+
+                var ami = data.Images[0];
+                publishNotification('SUCCESS', ami);
+              });
+            } else {
+              publishNotification('FAILURE', {});
+            }
+          };
+      Description: Publishes a notification to the gs-ami-update SNS topic
+      FunctionName: AMIFactory-PublishAmiReadyNotification
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 30
+      Tags:
+        - Key: Name
+          Value: AMIFactory-PublishAmiReadyNotification
+  SaveImageIdLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          const aws = require('aws-sdk');
+          const ec2 = new aws.EC2({ region: process.env.AWS_REGION });
+          const ssm = new aws.SSM({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+            var iteration = event.iteration.name;
+            if(!['Foundation', 'WebServer'].includes(iteration)) {
+              // nothing currently to update, return success
+              return callback(null, event);
+            }
+
+            var osToBuild = event.windowsOS.toLowerCase();
+            var paramToUpdate = '/amifactory/' + osToBuild + '/' + iteration.toLowerCase() + '/current-ami'
+
+            var params = {
+              Name: paramToUpdate,
+              Type: 'String',
+              Value: event.ImageId,
+              Overwrite: true
+            };
+
+            ssm.putParameter(params, function(err, data) {
+              if (err) {
+                console.log(err, err.stack);
+                return callback(err);
+              }
+              
+              callback(null, event);
+            });
+          };
+      Description: Saved the AMI Id to the correct parameter values
+      FunctionName: AMIFactory-SaveImageId
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 20
+      Tags:
+        - Key: Name
+          Value: AMIFactory-SaveImageId
+  RunNextWorkflowIterationLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          const aws = require('aws-sdk');
+          const ssm = new aws.SSM({ region: process.env.AWS_REGION });
+          const stepFunctions = new aws.StepFunctions({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+            var currentIteration = event.iteration.name;
+            var osToBuild = event.windowsOS.toLowerCase();
+            var osType = event.osType;
+            
+            var params = {
+              Name: '/amifactory/' + osToBuild + '/workflow'
+            };
+            
+            ssm.getParameter(params, function(err, ssmData) {                
+              if (err) {
+                console.log(err, err.stack);
+                console.log('Swallow exception and terminate execution.  If the parameter is missing, the workflow is done.')
+                return callback(null, event);
+              }
+                
+              var now = (new Date()).getTime();
+              
+              stepFunctions.listStateMachines({}, function(err, sfData) {
+                if (err) {
+                  console.log(err, err.stack);
+                  return callback(err);
+                }
+                
+                var stateMachineArn = '';
+                for(var i = 0; i < sfData.stateMachines.length; i++) {
+                  if(sfData.stateMachines[i].name.indexOf('AMIFactoryStateMachine') > -1) {
+                    stateMachineArn = sfData.stateMachines[i].stateMachineArn;
+                    break;
+                  }
+                }
+                
+                var workflow = JSON.parse(ssmData.Parameter.Value);
+                if(workflow[currentIteration] == undefined) {
+                  console.log('No next steps for ' + osToBuild + ' ' + currentIteration + '.  Assuming workflow is complete and returning success.');
+                  return callback(null, event);
+                }
+                var nextAutomationSteps = workflow[currentIteration].Automation;
+                var nextChefSteps = workflow[currentIteration].Chef;
+                
+                var iterationParameters = [];
+                for(var i=0; i < nextAutomationSteps.length; i++) {
+                  var nextIteration = nextAutomationSteps[i];
+                  var itParam = {
+                    stateMachineArn: stateMachineArn,
+                    input: '{ "osType": "' + osType + '", "' + osType + 'OS": "' + osToBuild + '", "iteration": { "name": "' + nextIteration + '", "sourceAMI": "' + currentIteration + '" } }',
+                    name: 'AMIFactory_StepFunctions_Execution_' + nextIteration + '_' + osToBuild + '_' + now
+                  };
+                  iterationParameters.push(itParam);
+                }
+                
+                for(var i=0; i < iterationParameters.length; i++) {
+                  stepFunctions.startExecution(iterationParameters[i], function(err, sfData) {
+                    console.log(JSON.stringify(sfData));
+                    
+                    if (err) {
+                      console.log(err, err.stack);
+                      return callback(err);
+                    }
+
+                    console.log(sfData);
+                
+                    callback(null, event);
+                  });
+                }
+              });
+            });
+          };
+      Description: Creates AMIs from ChefRoleBookList SSM parameter
+      FunctionName: AMIFactory-RunNextWorkflowIteration
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 30
+      Tags:
+        - Key: Name
+          Value: AMIFactory-RunNextWorkflowIterationLambda
+  RunEC2AutomationLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          const aws = require('aws-sdk');
+          const ec2 = new aws.EC2({ region: process.env.AWS_REGION });
+          const ssm = new aws.SSM({ region: process.env.AWS_REGION });
+
+          exports.handler = (event, context, callback) => {
+              var osToBuild = event.windowsOS.toLowerCase();
+              var iteration = event.iteration.name;
+              
+              var params = {
+                  DocumentName: 'AMIFactory-' + iteration,
+                  Parameters: { 
+                      'SourceAmiId' : ['{{ssm:/amifactory/' + osToBuild + '/' + event.iteration.sourceAMI.toLowerCase() + '/current-ami}}'],
+                      'OSVersion' : []
+                  }
+              };              
+              
+              if (['2012r2', '2016'].includes(osToBuild)) {
+                var osType = 'WindowsServer' 
+                params.Parameters.OSVersion = ['WindowsServer' + osToBuild];
+
+                params.Parameters.WindowsFeaturesList = ['{{ssm:/amifactory/' + osToBuild + '/' + iteration.toLowerCase() + '/feature-list}}'];
+              }
+
+              ssm.startAutomationExecution(params, function(err, data) {
+                if (err) {
+                  console.log(err, err.stack);
+                  return callback(err);
+                }
+                
+                event.AutomationExecutionId = data.AutomationExecutionId;
+                callback(null, event);
+              });
+          };
+      Description: Runs an SSM automation for Foundation or WebServer AMIs
+      FunctionName: AMIFactory-RunEC2Automation
+      Handler: index.handler
+      Role: !ImportValue AMIFactoryLambdaRoleArn
+      Runtime: nodejs6.10
+      Timeout: 10
+      Tags:
+        - Key: Name
+          Value: AMIFactory-RunEC2Automation
+Outputs:
+  RunWindowsStepFunctionLambda:
+    Description: Arn of the RunWindowsStepFunctionWorkflow Lambda
+    Value: !GetAtt 
+      - RunWindowsStepFunctionLambda
+      - Arn
+  RunEC2AutomationLambda:
+    Description: Arn of the RunEC2Automation Lambda
+    Value: !GetAtt 
+      - RunEC2AutomationLambda
+      - Arn
+    Export:
+      Name: AMIFactoryRunEC2AutomationLambdaArn
+  GetAutomationStatusLambda:
+    Description: Arn of the GetAutomationStatus Lambda
+    Value: !GetAtt 
+      - GetAutomationStatusLambda
+      - Arn
+    Export:
+      Name: AMIFactoryGetAutomationStatusLambdaArn
+  UpdateAWSImageParametersLambda:
+    Description: Arn of the UpdateAWSImageParameters Lambda
+    Value: !GetAtt 
+      - UpdateAWSImageParametersLambda
+      - Arn
+    Export:
+      Name: AMIFactoryUpdateAWSImageParametersLambdaArn
+  SaveImageIdLambda:
+    Description: Arn of the SaveBakedAMIToParameterStore Lambda
+    Value: !GetAtt 
+      - SaveImageIdLambda
+      - Arn
+    Export:
+      Name: SaveImageIdLambdaArn
+  RunNextWorkflowIterationLambda:
+    Description: Arn of the RunNextWorkflowIteration Lambda
+    Value: !GetAtt 
+      - RunNextWorkflowIterationLambda
+      - Arn
+    Export:
+      Name: RunNextWorkflowIterationLambdaArn
+  AmiUpdateTopicArn:
+    Description: Arn of the AMI Notification SNS Topic
+    Value: !Ref AmiUpdateTopic
+    Export:
+      Name: AmiUpdateTopicArn
+  PublishAmiUpdateNotificationLambda:
+    Description: Arn of the PublishAmiUpdateNotification Lambda
+    Value: !GetAtt 
+      - PublishAmiUpdateNotificationLambda
+      - Arn
+    Export:
+      Name: PublishAmiUpdateNotificationLambdaArn
