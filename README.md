@@ -65,7 +65,7 @@ AMIs will be tagged with values that make it easy to determine when, how, and fo
 
 #### Automation
 
-AMI Factory automation is accomplished using a Step Functions and is triggered by via SNS subscription to AWS's ec2-windows-ami-update topic.
+AMI Factory automation is accomplished using a Step Function and is triggered by via SNS subscription to AWS's ec2-windows-ami-update topic.
 
 The Step Function StateMachine and it's associated Lambda's can be found in the templates directory of this repository.  The StateMachine steps are diagramed below:
 
