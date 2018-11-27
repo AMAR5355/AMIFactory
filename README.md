@@ -7,7 +7,7 @@ This is accomplished using:
 * [Systems Manager Documents](http://docs.aws.amazon.com/systems-manager/latest/userguide/automation-createdoc.html) for workflow and parameter definition
 * [Systems Manager Automations](http://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-automation.html) for executing the workflows defined in the documents
 * [Systems Manager Parameters](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-paramstore.html) for storing versioned values, used during the automations workflow
-* [Step Funcions](https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html) for orchestrating the workflow
+* [Step Functions](https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html) for orchestrating the workflow
 * [SNS](https://docs.aws.amazon.com/sns/latest/api/Welcome.html) for Pub/Sub notifications
 
 
@@ -65,8 +65,8 @@ AMIs will be tagged with values that make it easy to determine when, how, and fo
 
 #### Automation
 
-AMI Factory automation is accomplished using a StepFunctions and is triggered by via SNS subscription to AWS's ec2-windows-ami-update topic.
+AMI Factory automation is accomplished using a Step Functions and is triggered by via SNS subscription to AWS's ec2-windows-ami-update topic.
 
-The StepFunction StateMachine and it's associated Lambda's can be found in the templates directory of this repository.  The StateMachine steps are diagramed below:
+The Step Function StateMachine and it's associated Lambda's can be found in the templates directory of this repository.  The StateMachine steps are diagramed below:
 
-![AMIFactory StepFunction Diagram](diagrams/StepFunction.png)
+![AMIFactory Step Function Diagram](diagrams/StepFunction.png)
