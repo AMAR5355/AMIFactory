@@ -129,6 +129,28 @@
         }
       },
       {
+        "name": "2016EbsVolumeInitialization",
+        "action": "aws:runCommand",
+        "maxAttempts": 3,
+			  "onFailure": "step:TerminateInstancewithPredjudice",
+			  "timeoutSeconds": 1800,
+        "inputs": {
+          "DocumentName": "AWS-RunPowerShellScript",
+          "InstanceIds": ["{{LaunchInstance.InstanceIds}}"],
+          "Parameters": {
+            "commands": [
+              "[System.Version]$osversion = [System.Environment]::OSVersion.Version",
+              "if($osversion.Major -ge 10) {",
+              "  $path = 'C:\\ProgramData\\Amazon\\EC2-Windows\\Launch\\Scripts\\InitializeDisks.ps1 -Schedule'",
+              "  invoke-expression $path ",
+              "} else {",
+              "  Write-Host 'This step is only for Windows 2016 or newer'",
+              "}"         
+            ]
+          }
+        }
+      },
+      {
         "name": "InstallAWSCLI",
         "action": "aws:runCommand",
         "maxAttempts": 3,
